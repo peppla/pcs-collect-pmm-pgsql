@@ -489,11 +489,11 @@ async function renderDashboard(browser, dashboardUid, pathToGraphs, extraParams 
 
     let url;
     if (resolvedBaseUrl) {
-      // Use the resolved URL (has all template variables) and add viewPanel
+      // The resolved URL is already at /graph/d/... (from the iframe).
+      // Use it directly with viewPanel — Grafana renders panels natively at /graph/d/.
       const resolved = new URL(resolvedBaseUrl);
       resolved.searchParams.set("viewPanel", `panel-${panel.id}`);
-      const pmmPath = resolved.pathname.replace(/^\/graph\//, "/pmm-ui/graph/");
-      url = `${resolved.origin}${pmmPath}?${resolved.searchParams}&kiosk`;
+      url = `${resolved.origin}${resolved.pathname}?${resolved.searchParams}&kiosk`;
     } else {
       // Fallback: basic URL without resolved variables
       const params = new URLSearchParams({
@@ -511,7 +511,7 @@ async function renderDashboard(browser, dashboardUid, pathToGraphs, extraParams 
       if (extraParams.database) {
         params.set("var-database", extraParams.database === "all" ? "$__all" : extraParams.database);
       }
-      url = `${cleanUrl}/pmm-ui/graph/d/${dashboardUid}/${slug}?${params}&kiosk`;
+      url = `${cleanUrl}/graph/d/${dashboardUid}/${slug}?${params}&kiosk`;
     }
 
     if (VERBOSE) console.log(`## DEBUG\n## ${url}`);
@@ -520,24 +520,24 @@ async function renderDashboard(browser, dashboardUid, pathToGraphs, extraParams 
       const panelPage = await browser.newPage();
       await panelPage.goto(url, { waitUntil: "networkidle", timeout: 60_000 });
 
-      // PMM wraps Grafana in an iframe via /pmm-ui/. We need to find the
-      // iframe containing the actual panel and work within that frame.
+      // Panel is loaded at /graph/d/ (direct Grafana). On some PMM versions
+      // this may redirect to /pmm-ui/graph/d/ which embeds an iframe.
+      // Try to find an iframe; if none, work on the main frame directly.
       let targetFrame = panelPage;
 
       const frames = panelPage.frames();
       if (VERBOSE) console.log(`   (${frames.length} frame(s) on page: ${frames.map((f) => f.url()).join(", ")})`);
 
-      // Look for the Grafana iframe. PMM serves /pmm-ui/graph/d/... as the main page,
-      // which embeds Grafana at /graph/d/... (without /pmm-ui/) in an iframe.
-      // Skip the main frame and find the child iframe with the Grafana content.
-      const mainFrame = panelPage.mainFrame();
-      for (const frame of frames) {
-        if (frame === mainFrame) continue; // skip the top-level page
-        const frameUrl = frame.url();
-        if (frameUrl.includes("/graph/d/") || frameUrl.includes("/d-solo/") || frameUrl.includes("/d/")) {
-          targetFrame = frame;
-          if (VERBOSE) console.log(`   (using iframe: ${frameUrl})`);
-          break;
+      if (frames.length > 1) {
+        const mainFrame = panelPage.mainFrame();
+        for (const frame of frames) {
+          if (frame === mainFrame) continue;
+          const frameUrl = frame.url();
+          if (frameUrl.includes("/graph/d/") || frameUrl.includes("/d-solo/") || frameUrl.includes("/d/")) {
+            targetFrame = frame;
+            if (VERBOSE) console.log(`   (using iframe: ${frameUrl})`);
+            break;
+          }
         }
       }
 
